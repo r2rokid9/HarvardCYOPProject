@@ -16,7 +16,7 @@ The following files are the contents of the project<br>
 <br>
 <b>CreditCardFraudReport.rmd</b> = R Markdown file used to produce CreditCardFraudReport.pdf<br>
 <br>
-<b>Kalbo.r</b> = R script consistent to the report and markdown file<br>
+<b>CreditCardFraudAnalysis.r</b> = R script consistent to the report and markdown file<br>
 
 <h2> Running the .rmd or .r code </h2>
 
