@@ -1,0 +1,889 @@
+---
+title: Analyzing the Effectiveness of Data Set Balancing Techniques in Classifications
+  for Detecting Truly Fraudulent Credit Card Transactions
+author: "Arturo P. Caronongan III"
+date: '`r format(Sys.time(), "%B %d, %Y")`'
+output:
+  pdf_document: default
+subtitle: In partial fulfillment for the Data Science Professional Certification from
+  Harvard University
+toc: true
+abstract: "This project is the second of two deliverables for Harvard University's Data Science Professional Certification under the course PH125.9x Data Science: Capstone. In this project, the ULB dataset containing 284,807 transaction records will be used to classify fraudulent and non-fraudulent credit card transactions. The aforementioned dataset is heavily unbalanced, with a very large bias towards the amount of non-fraudulent transactions, which make up 99.83% of the data set.  Different data balancing techniques will be performed in different circumstances and the impact to the resulting classifier model of these techniques will be analyzed."
+---
+
+```{r packages, echo = FALSE,results='hide',message=FALSE}
+if(!require(tidyverse)) install.packages("tidyverse") 
+if(!require(kableExtra)) install.packages("kableExtra")
+if(!require(tidyr)) install.packages("tidyr")
+if(!require(tidyverse)) install.packages("tidyverse")
+if(!require(stringr)) install.packages("stringr")
+if(!require(ggplot2)) install.packages("ggplot2")
+if(!require(gbm)) install.packages("gbm")
+if(!require(dplyr)) install.packages("dplyr")
+if(!require(caret)) install.packages("caret")
+if(!require(xgboost)) install.packages("xgboost")
+if(!require(e1071)) install.packages("e1071")
+if(!require(class)) install.packages("class")
+if(!require(ROCR)) install.packages("ROCR")
+if(!require(randomForest)) install.packages("randomForest")
+if(!require(PRROC)) install.packages("PRROC")
+if(!require(reshape2)) install.packages("reshape2")
+if(!require(caTools)) install.package("caTools")
+if(!require(smotefamily)) install.package("smotefamily")
+if(!require(data.table))
+  install.packages("data.table", repos = "http://cran.us.r-project.org")
+if (!require(ROSE))
+  install.packages("ROSE")
+
+library(dplyr)
+library(tidyverse)
+library(kableExtra)
+library(tidyr)
+library(ggplot2)
+library(gbm)
+library(caret)
+library(xgboost)
+library(e1071)
+library(class)
+library(ROCR)
+library(randomForest)
+library(PRROC)
+library(reshape2)
+library(rpart.plot)
+library(MASS)
+library(caTools)
+library(ROSE)
+library(smotefamily)
+```
+
+```{r, echo = FALSE,results='hide',message=FALSE}
+credit_card <- read.csv('creditcard.csv')
+```
+
+# 1.0 Introduction and Overview of the Problem
+
+Credit Card fraud is a problem that exists in today's technologically savy world where digital shopping, online transactions, and anything related to handling transactions involving money is sgrowing each day. The issue is that the norm for completing online transactions normally require the use of credit cards or online payment services like paypal in completing these transactions.
+
+As these transactions are done over the web along with the existence of security flaws due to network vulnerables being discovered, it is inevitable that sometimes sensitive data of certain individuals can get compromised. This has often led to data theft, and more particularly credit card fraud.
+
+Credit card fraud is defined as a type of identity theft which involves the process of completing a purchase with another individual's credit card information without proper authorization from the said individual. It is a very costly in a way that it costs Australia and the 1.6 Billion USD per year and  UK £844.8 in the year 2018 alone.[1,2] From 2016 to 2025, the US-based research agency projected the fraud losses will nearly double, climbing from 22.8 billion to nearly 50 billion USD. [3]
+
+Due to the huge implications, both in terms of the economic and mental well-being of individuals affected by fraudulent transactions, research has been done with regards to detecting fraudulent cases. Several studies have been done with regards to classifying Fraudulent Cases using Decision trees. However, the dataset used in certain studies have led to certain issues, particularly with regards to an imbalance that exists within the instances of fraudulent and non-fraudulent transactions due to the sheer volume of transactions that occur over time and the prevalence of non-fraudulent transactions compared to the prevalence of fraudulent transactions due to an increase in data security.
+
+## 1.1 ULB Credit Card Dataset
+
+The ULB dataset used for this study contains transactions made by credit cards in by european cardholders that occured in September 2013 over a span of two days. The data set recorded a total of 492 frauds out of 284,807 transactions. The dataset is highly unbalanced, where the positive class (frauds) account for 0.172% of all transactions.
+
+The dataset contains only numerical input variables which are the result of a PCA transformation due to consumer confidentiality. Features V1, V2, … V28 are the principal components obtained with PCA, the only features which have not been transformed with PCA are 'Time' and 'Amount'. Feature 'Time' contains the seconds elapsed between each transaction and the first transaction in the dataset. The feature 'Amount' is the transaction Amount, this feature can be used for example-dependant cost-senstive learning. Feature 'Class' is the response variable and it takes value 1 in case of fraud and 0 otherwise.
+
+## 1.2 Approach and Objective
+
+As mentioned in the previous section, the dataset is very unbalanced which can prove difficult for classification. However, there exists techniques for data balancing, techniques such as Random Oversampling (ROS), Random Undersampling (RUS), both Random OverSampling & Random Undersampling (ROS + RUS), and Synthetic Minority Oversampline Technique (SMOTE). Several of the studies mentioned in section 1.0 made use of Classification Trees as algorithms to distinguish the difference between Fraudulent Transactions and Non-Fraudulent transactions. Many of their recommendations indicated the need for a balanced dataset, when identifying the Fraudulent cases (or in the case of the dataset, True-Negatives).
+
+This study will make use of sampling techniques and observe the impact of performing sampling techniques with regards to determining the role of data balancing techniques in determining the True-Negatives with regards to detecting fraudulent transactions while minimizing the impact in True Positive values. There will be two approaches that will be experimented on, where the first will experiment on taking a very small subset of the dataset and applying the data balancing technique on that small subset only. The second approach will examine the impact of applying data balancing before obtaining the training and the testing dataset to the classification algorithm.
+
+# 2.0 Preliminary Data Analysis
+
+The dataset has been mentioned to be unbalanced, with the distributon count heavily biased towards the number of non-fraudulent cases. We will confirm this statement using preliminary analysis of the data.
+
+```{r, message = FALSE, warning = FALSE}
+str(credit_card)
+head(credit_card)
+summary(credit_card)
+```
+We can clearly see that there is approximately `284807` rows and `31` columns in our dataset. With the sheer volume of data, it is important that we check if there are any missing values so we can see if we will need to perform additional data pre-processing.
+
+```{r, message = FALSE, warning = FALSE}
+sum(is.na(credit_card))
+```
+
+Fortunately, there are no missing values present.
+
+For pre-processing the data, we are going to convert the Class attribute into a factor. Currently, the `credit_card$Class` data is of `int` type. As a regression type analysis will not be used for this experiment, it will be converted into a factor so that the data set may be used for classification. This is done by executing the following script.
+
+```{r, message = FALSE, warning = FALSE}
+credit_card$Class <- factor(credit_card$Class, levels = c(0,1))
+```
+
+We can now observe how unbalanced the dataset is. The dataset indicates that transactions labelled with a Class value of 0 are considered as non-fraudulent transactions while transactions labelled with a class value of 1 are deemed as fraudulent transactions.
+
+```{r, message = FALSE, warning = FALSE}
+#get the distribution of fraud and legit transactions in the dataset
+table(credit_card$Class)
+
+#get the percentage of fraud and legit transactions in the dataset
+prop.table(table(credit_card$Class))
+
+#Pie chart of credit card transactions
+labels <- c("legit", "fraud")
+labels <- paste(labels, round(100*prop.table(table(credit_card$Class)),2))
+labels <- paste0(labels, "%")
+
+pie (table(credit_card$Class), labels, col = c("blue","red"),
+     main = "Pie Chart of Credit Card Transactions")
+```
+
+It is now painfully obvious that the dataset is heavily unbalanced. The data shows that there are 284315 cases of non-fraudulent transactions compared to only 492 cases recorded in the dataset. This means that the data set is comprised of 99.83% of non-fraudulent transactions and only 0.17% of fraudulent transactions.
+
+To visualize the effect of an extremely unbalanced dataset towards a classification model, we will attempt to create a baseline model that will predict that all transactions are non-fraudulent cases using a ZeroR classifier.
+
+```{r, message = FALSE, warning = FALSE}
+predictions <- rep.int(0,nrow(credit_card))
+predictions <- factor(predictions, levels = c(0,1))
+```
+
+We will then generate the confusion matrix of the generated model.
+
+```{r, message = FALSE, warning = FALSE}
+confusionMatrix(data = predictions, reference = credit_card$Class)
+```
+
+Again, the 99.83% accuracy pertains to the data being comprised of 99.83% of non-fraudulent cases. This shows that relying on classification accuracy is not reliable under these circumstances. In this scenario, we classified even the fraudulent cases as non-fraudulent transactions which still led to the very high accuracy. Despite that, we can say that the 492 cases of fraudulent transactions could have a big economic impact.
+
+Since classification is a big issue due to the imbalanced data set, this experiment will be conducted to see how effective data balancing techniques are in improving classifications for detecting truly fraudulent cases.
+
+As a result, the aim of this study is to examine the effectivity of these data set balancing methods, such as the Random Oversampling technique (ROS), the Random Undersampling Technique (RUS), ROS and RUS combined (ROS+RUS), and the Synthetic Minority Oversampling Technique (SMOTE) in maximizing the True Negative (Truly Fraudulent cases) value obtained while minimizing the decrease in the True Positive Rate (Truly Non-Fraudulent cases) value obtained by Classification Trees.
+
+# 3.0 Applying Data Balancing Techniques to a Subset of the Dataset
+
+For faster processing, this section of the experiment will use a subset of the dataset. To further emphasize data balancing, 10% of the data is going to be extracted.
+
+```{r, message = FALSE, warning = FALSE}
+set.seed(1)
+credit_sample = sample.split(credit_card$Class,SplitRatio=0.90) #Take 10% of the dataset
+
+final_credit_sample = subset(credit_card,credit_sample == TRUE)
+sub_credit_card = subset(credit_card,credit_sample == FALSE) #sub_credit_card will be 10% 
+#of the dataset
+
+```
+
+We will take analyze the resulting data set that was obtained. Again, we can see that the data is imbalanced.
+
+```{r, message = FALSE, warning = FALSE}
+table(sub_credit_card$Class)
+```
+
+We can see the distribution of Fraudulent Cases to Non-Fraudulent cases taking the V1 and V2 variables in relation with each other in our new data set.
+
+```{r, message = FALSE, warning = FALSE}
+ggplot(data = sub_credit_card, aes(x = V1, y = V2, col = Class)) +
+  geom_point() +
+  ggtitle("Subset of Data Set") +
+  theme_bw() +
+  scale_color_manual(values = c('blue', 'red'))
+```
+
+We will further generate a test set and a training set from this subset.
+
+```{r, message = FALSE, warning = FALSE}
+set.seed(123)
+
+data_sample = sample.split(sub_credit_card$Class,SplitRatio=0.80)
+
+train_data = subset(sub_credit_card,data_sample == TRUE)
+test_data = subset(sub_credit_card,data_sample == FALSE)
+```
+
+Our final hypothetical data sets will now consist of the following.
+
+First, the training data set's distribution, value summaries and visualization:
+```{r, message = FALSE, warning = FALSE}
+summary(train_data)
+table(train_data$Class)
+ggplot(data = train_data, aes(x = V1, y = V2, col = Class)) +
+  geom_point() +
+  ggtitle("Training Data Distribution") +
+  theme_bw() +
+  scale_color_manual(values = c('blue', 'red'))
+```
+
+Followed by the test data set's distribution, value summarries, and visualization:
+
+```{r, message = FALSE, warning = FALSE}
+summary(test_data)
+table(test_data$Class)
+ggplot(data = test_data, aes(x = V1, y = V2, col = Class)) +
+  geom_point() +
+  ggtitle("Test Data Distribution") +
+  theme_bw() +
+  scale_color_manual(values = c('blue', 'red'))
+```
+
+As of now, it is important to note that the training data contains `22745` cases of non-fraudulent transactions and `39` cases of fraudulent transactions. These values will be important when performing our different data balancing techniques.
+
+The training data will be used to apply the different data balancing techniques, and new data sets will be generated as a result of applying these data balancing methods.
+
+## 3.1 The Random Oversampling Method (ROS)
+
+Random oversampling involves randomly duplicating examples from the minority class and adding them to the training dataset., where Examples from the training dataset are selected randomly with replacement. Examples from the minority class can be chosen and added to the new “more balanced” training dataset multiple times; they are selected from the original training dataset, added to the new training dataset, and then returned or “replaced” in the original dataset, allowing them to be selected again. This technique can be effective for those machine learning algorithms that are affected by a skewed distribution and where multiple duplicate examples for a given class can influence the fit of the model. [12]
+
+Do note that the ROS method is only going to be performed on the training data-set, that way we will be able to avoid over-fitting. We will create our dataset using the ROS method using the following script.
+
+```{r, message = FALSE, warning = FALSE}
+n_legit <- 22745 #No. of Non-Fraudulent Transactions in our training data-set
+new_frac_legit <- 0.50
+new_n_total <- n_legit/new_frac_legit
+
+oversampling_result <- ovun.sample(Class ~., data = train_data, method = "over", 
+                                   N = new_n_total, seed = 2019)
+
+oversample_credit <- oversampling_result$data
+```
+
+Our resulting dataset called `oversample_credit` is now as follows. We can see that the distribution between the fraudulent cases and non-fraudulent cases are now both at `22745`.
+
+```{r, message = FALSE, warning = FALSE}
+table(oversample_credit$Class)
+
+ggplot(data = oversample_credit, aes(x = V1, y = V2, col = Class)) + 
+  geom_point(position = position_jitter(width = 0.1)) +
+  ggtitle("Oversampled Training Data Set") +
+  theme_bw() +
+  scale_color_manual(values = c('blue', 'red'))
+```
+
+We can clearly see from the graph that we have augmented the number of fraudulent cases in our dataset. We can further analyze the values that were returned by summarizing our `oversample_credit`
+
+```{r, message = FALSE, warning = FALSE}
+summary(oversample_credit)
+```
+
+## 3.2 The Random Undersampling Method (RUS)
+
+Random undersampling involves randomly selecting examples from the majority class to delete from the training dataset. The effect of this is reducing the number of examples in the majority class in the transformed version of the training dataset. This process can be repeated until the desired class distribution is achieved, such as an equal number of examples for each class. A limitation of undersampling is that examples from the majority class are deleted that may be useful, important, or perhaps critical to fitting a robust decision boundary. Given that examples are deleted randomly, there is no way to detect or preserve “good” or more information-rich examples from the majority class. [12]
+
+The following script will be used to perform RUS to our training dataset.
+
+```{r, message = FALSE, warning = FALSE}
+n_fraud <- 39 # No. of fraudulent cases in the training dataset
+new_frac_fraud <- 0.50
+new_n_total <- n_fraud/new_frac_fraud
+
+undersampling_result <- ovun.sample(Class ~ .,
+                                    data = train_data,
+                                    method = "under",
+                                    N = new_n_total,
+                                    seed = 2019)
+
+undersampled_credit <- undersampling_result$data
+```
+
+Our resulting dataset called `undersampled_credit` is now as follows. We can see that the distribution between the fraudulent cases and non-fraudulent cases are now both at `39`. 
+
+```{r, message = FALSE, warning = FALSE}
+table(undersampled_credit$Class)
+
+ggplot(data = undersampled_credit, aes(x = V1, y = V2, col = Class)) + 
+  geom_point(position = position_jitter(width = 0.1)) +
+  ggtitle("Undersampled Training Data Set") +
+  theme_bw() +
+  scale_color_manual(values = c('blue', 'red'))
+```
+
+It is probably dangerous to see how low all our instances are, and how that could affect the classifier, but it probably could lead to less bias when the dataset is used to classify instances. We can now see the distribution of the dataset with the succeeding script.
+
+```{r, message = FALSE, warning = FALSE}
+summary(oversample_credit)
+```
+
+## 3.3 ROS and the RUS Method Combined
+
+Another approach involves combining both the ROS and RUS method. Here, we reduce the number of instances of our non-fraudulent transactions through RUS, while increasing the number of fraudulent transactions through ROS. Again, there is danger of important data being lost in this approach, but the bias that the classifier will commit from this dataset may possibly be reduced, although the last statement will be tested during a later section.
+
+The following script will be used to create our new dataset called `sampled_credit` which will be the result of combining the ROS and RUS method to produce a balanced dataset.
+
+```{r, message = FALSE, warning = FALSE}
+n_new <- nrow(train_data)
+fraction_fraud_new <- 0.50
+
+sampling_result <- ovun.sample(Class ~.,
+                               data = train_data,
+                               method = "both",
+                               N = n_new,
+                               p = fraction_fraud_new,
+                               seed = 2019)
+
+sampled_credit <- sampling_result$data
+```
+
+Our resulting dataset, like the previous methods, should now contain only a slight difference between the number of fraudulent cases and non-fraudulent cases. 
+
+```{r, message = FALSE, warning = FALSE}
+table(sampled_credit$Class)
+
+ggplot(data = sampled_credit, aes(x = V1, y = V2, col = Class)) + 
+  geom_point(position = position_jitter(width = 0.1)) +
+  ggtitle("ROS + RUS Training Data Set") +
+  theme_bw() +
+  scale_color_manual(values = c('blue', 'red'))
+```
+
+We can observe the contents of our dataset with the following script.
+
+```{r, message = FALSE, warning = FALSE}
+summary(sampled_credit)
+```
+
+## 3.4 Synthetic Minority Oversampling Technique (SMOTE)
+
+The Synthetic Minority Oversampling Technique (SMOTE) is a type of oversampling method. The theory basis is that the feature space of minority class instances is similar to that of the majority class. The mathematical approach is as follows: For each instance $x_i$ in the minority class, SMOTE searches its k nearest neighbors and one neighbor is randomly selected as $x_{\theta}$ (we call instances $x_i$ and $x{\theta}$ seed sample). Then a random number between [0,1] $\lambda$ is generated.
+
+The new data set entry $x_{new}$ is then generated as follows:
+
+$$ x_{new} = x_i + (x_{\theta} - x_i) * \lambda $$
+
+Using the SMOTE technique, we will generate a new dataset using the following script.
+
+```{r, message = FALSE, warning = FALSE}
+# Set the number of fraud and legitimate cases and the desired
+#percentage of legimate cases
+
+n0 <- 22745 #No. of Non-fraudulent cases
+n1 <- 39 #No. of fraudulent cases
+r0 <- 0.6 #Proportion to convert minority cases
+
+#Calculate the value for the dup_size parameter of SMOTE
+ntimes <- ((1 - r0) / r0) * (n0 / n1) - 1
+
+smote_output = SMOTE(X = train_data[, -c(1,31)],
+                     target = train_data$Class,
+                     K = 5,
+                     dup_size = ntimes)
+
+credit_smote <- smote_output$data	
+
+colnames(credit_smote)[30] <- "Class" #Fix corresponding columnd name
+```
+
+Likewise, we can find that the dataset is has been balanced in accordance to the algorithm. The visualization can give a clearer idea on how the minority class (Fraudulent cases) has been re-balanced alongside with the majority class (Non-fraudulent cases).
+
+```{r, message = FALSE, warning = FALSE}
+table(credit_smote$Class)
+
+prop.table(table(credit_smote$Class))
+
+ggplot(credit_smote, aes(x = V1, y = V2, color = Class)) +
+  geom_point() +
+  ggtitle("SMOTE Generated Training Data Set") +
+  theme_bw() + 
+  scale_color_manual(values = c('blue','red'))
+```
+
+Finally, the summary of the generated dataset are as follows.
+
+```{r, message = FALSE, warning = FALSE}
+summary(credit_smote)
+```
+
+# 4.0 Generating Confusion Matrices via Classification from Sub Datasets
+
+At this point, we have a series of datasets available. To give a summary, the following are a description of the datasets that are now provided within the codes that will be executed in this section.
+
+`credit_card` = 100% of the dataset  
+`final_credit_sample` = 90% of the dataset (Used for final analysis)  
+`sampled_credit` = 10% of the dataset used for training  
+`train_data` = 80% of sampled_credit  
+`test_data` = 20% of sampled_credit  
+`oversample_credit` = train_data balanced with ROS  
+`undersampled_credit` = train_data balanced with RUS  
+`sampled_credit` = train_data balanced with ROS and RUS  
+`credit_smote` = train_data balanced with SMOTE  
+
+## 4.1 Decision tree without data balancing
+
+We will first generate the decision tree without any sort of data balancing done on the training data that was sampled. The folowing is the plot that is generated from the dataset.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+CART_model <- rpart(Class ~ ., train_data[,-1], model=TRUE)
+
+rpart.plot(CART_model, extra = 0, type = 5, tweak = 1.2)
+```
+
+The resulting confusion matrix when applied to the test set is as follows:
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#predict fraud classes
+predicted_val <- predict(CART_model, test_data[-1], type = 'class')
+
+confusionMatrix(predicted_val, test_data$Class)
+```
+
+Applying it to the rest of the dataset gives the following confusion matrix.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+predicted_val <- predict(CART_model, final_credit_sample, type = 'class')
+confusionMatrix(predicted_val, final_credit_sample$Class)
+```
+
+## 4.2 Decision tree with ROS balancing
+
+Next, the dataset that was balanced with ROS will be used to generate our classifer.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+CART_ROS_model <- rpart(Class ~. , oversample_credit, model=TRUE)
+
+rpart.plot(CART_ROS_model, extra = 0, type = 5, tweak = 1.2)
+```
+
+The resulting confusion matrix when applied to the test set is as follows.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#Predict fraud classes
+predicted_val <- predict(CART_ROS_model, test_data, type = 'class')
+
+#build confusion matrix
+confusionMatrix(predicted_val, test_data$Class)
+```
+
+The corresponding model when applied to the rest of the dataset is as follows.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+predicted_val <- predict(CART_ROS_model, final_credit_sample, type = 'class')
+confusionMatrix(predicted_val, final_credit_sample$Class)
+```
+
+## 4.3 Decision tree with RUS balancing
+
+The next dataset to be used for classifying will be the dataset balanced with RUS.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+CART_RUS_model <- rpart(Class ~. , undersampled_credit, model=TRUE)
+
+rpart.plot(CART_RUS_model, extra = 0, type = 5, tweak = 1.2)
+```
+
+This led to the following confusion matrix:
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#Predict fraud classes
+predicted_val <- predict(CART_RUS_model, test_data, type = 'class')
+
+#build confusion matrix
+confusionMatrix(predicted_val, test_data$Class)
+```
+
+Applying the decision tree to the rest of the dataset yields the following confusion matrix.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+predicted_val <- predict(CART_RUS_model, final_credit_sample, type = 'class')
+confusionMatrix(predicted_val, final_credit_sample$Class)
+```
+
+## 4.4 Decision tree with ROS + RUS balancing
+
+The decision tree generated with the ROS+RUS dataset is then given in the following figure.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+CART_ROS_AND_RUS_model <- rpart(Class ~. ,sampled_credit, model=TRUE)
+
+rpart.plot(CART_ROS_AND_RUS_model, extra = 0, type = 5, tweak = 1.2)
+```
+
+Likewise, this is the resulting confusion matrix.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#Predict fraud classes
+predicted_val <- predict(CART_ROS_AND_RUS_model, test_data, type = 'class')
+
+#build confusion matrix
+confusionMatrix(predicted_val, test_data$Class)
+```
+
+Applying the model to the dataset yields the following result.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+predicted_val <- predict(CART_ROS_AND_RUS_model, final_credit_sample, type = 'class')
+confusionMatrix(predicted_val, final_credit_sample$Class)
+```
+
+## 4.5 Decision tree wih SMOTE balancing
+
+For the dataset balanced using the SMOTE, the following illustration shows the decision tree generated.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+CART_SMOTE_model <- rpart(Class ~. , credit_smote, model=TRUE)
+
+rpart.plot(CART_SMOTE_model, extra = 0, type = 5, tweak = 1.2)
+```
+
+The corresponding confusion matrix is as follows.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#Predict fraud classes
+predicted_val <- predict(CART_SMOTE_model, test_data, type = 'class')
+
+#build confusion matrix
+confusionMatrix(predicted_val, test_data$Class)
+```
+
+On the rest of the dataset, the following confusion matrix is obtained.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+predicted_val <- predict(CART_SMOTE_model, final_credit_sample, type = 'class')
+confusionMatrix(predicted_val, final_credit_sample$Class)
+```
+
+# 5.0 Data Balancing Techniques on the full dataset.
+
+Sections 3 and 4, our methodology described taking a small subset of the dataset, generating a training and test set from the subset, and perfoming data balancing techniques on the training set. We observed that there is a plausibility in improving the effect of detecting True Negatives, but the kappa value is considerably very low.
+
+In this section, data balancing techniques will be performed on the full dataset before performing the typical 80-20 split for training and testing.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+credit_card_copy <- credit_card
+```
+
+## 5.1 Baseline Dataset Classification
+
+While it is true that performing classification on the base dataset alone might not yield a reliable model and may contain a very large bias towards the non-fraudulent cases, we will still generate it to use it as another baseline model along with the model generated with ZeroR in Section 2.0.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+set.seed(1)
+
+#Split to 80 - 20 training and test again
+credit_sample_vanilla = sample.split(credit_card_copy$Class,SplitRatio=0.80)
+
+training_credit_vanilla = subset(credit_card_copy,credit_sample_vanilla == TRUE)
+testing_credit_vanilla = subset(credit_card_copy,credit_sample_vanilla == FALSE) #sub_credit_card will be 10% of the dataset
+```
+
+Our obtained training and testing dataset will consist of the following distribution.
+
+```{r, message = FALSE, warning = FALSE}
+table(training_credit_vanilla$Class)
+table(testing_credit_vanilla$Class)
+```
+
+The resulting classification model and confusion matrix are as follows.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#Now let's see how the decision tree will go
+
+CART_vanilla_full_model <- rpart(Class ~ ., training_credit_vanilla, model=TRUE)
+
+rpart.plot(CART_vanilla_full_model, extra = 0, type = 5, tweak = 1.2)
+
+#predict fraud classes
+predicted_val <- predict(CART_vanilla_full_model, testing_credit_vanilla, type = 'class')
+
+confusionMatrix(predicted_val, as.factor(testing_credit_vanilla$Class))
+```
+
+## 5.2 Balanced Complete Dataset with ROS
+
+Now, ROS will be applied into the dataset before obtaining the training and testing data.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+# Using ROS to balance the dataset
+n_legit <- 284315
+new_frac_legit <- 0.50
+new_n_total <- n_legit/new_frac_legit
+
+oversampling_result <- ovun.sample(Class ~., data = credit_card_copy, method = "over", N = new_n_total, seed = 2019)
+
+oversample_credit_complete <- oversampling_result$data
+
+table(oversample_credit_complete$Class)
+
+
+set.seed(1)
+
+#Split to 80 - 20 training and test again
+credit_sample_ros = sample.split(oversample_credit_complete$Class,SplitRatio=0.80)
+
+training_credit_ros = subset(oversample_credit_complete,credit_sample_ros == TRUE)
+testing_credit_ros = subset(oversample_credit_complete,credit_sample_ros == FALSE) #sub_credit_card will be 20% of the dataset
+
+```
+
+Applying ROS before obtaining the training and testing data set will yield to the following distribution for the training and testing data respectively.
+
+```{r, message = FALSE, warning = FALSE}
+table(training_credit_ros$Class)
+table(testing_credit_ros$Class)
+```
+
+The corresponding classifier model and confusion matrix obtained upon testing are as follows.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#Now, let's create the model
+CART_ros_full_model <- rpart(Class ~ ., training_credit_ros, model=TRUE)
+
+rpart.plot(CART_ros_full_model, extra = 0, type = 5, tweak = 1.2)
+
+#predict fraud classes
+predicted_val <- predict(CART_ros_full_model, testing_credit_ros, type = 'class')
+
+confusionMatrix(predicted_val, as.factor(testing_credit_ros$Class))
+
+```
+
+## 5.3 Balanced Complete Dataset with RUS
+
+The RUS method will now be applied on the dataset. Again, with the vast amount of data we have, it might be possible that important data might be lost, but there's a possibility that significant ones can still remain.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+n_fraud <- 492
+new_frac_fraud <- 0.50
+new_n_total <- n_fraud/new_frac_fraud
+
+undersampling_result <- ovun.sample(Class ~ .,
+                                    data = credit_card_copy,
+                                    method = "under",
+                                    N = new_n_total,
+                                    seed = 2019)
+
+undersampled_credit_complete <- undersampling_result$data
+
+table(undersampled_credit_complete$Class)
+
+set.seed(1)
+
+#Split to 80 - 20 training and test again
+credit_sample_rus = sample.split(undersampled_credit_complete$Class,SplitRatio=0.80)
+
+training_credit_rus = subset(undersampled_credit_complete,credit_sample_rus == TRUE)
+testing_credit_rus = subset(undersampled_credit_complete,credit_sample_rus == FALSE) #sub_credit_card will be 20% of the dataset
+```
+
+Applying RUS to the complete dataset gives us the following distribution for our training and test data respectively.
+
+```{r, message = FALSE, warning = FALSE}
+table(training_credit_rus$Class)
+table(testing_credit_rus$Class)
+```
+
+The resulting computational model and confusion matrix are as follows.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+### Now to make the model ###
+
+CART_RUS_model <- rpart(Class ~. , training_credit_rus, model=TRUE)
+
+rpart.plot(CART_RUS_model, extra = 0, type = 5, tweak = 1.2)
+
+#Predict fraud classes
+predicted_val <- predict(CART_RUS_model, testing_credit_rus, type = 'class')
+
+#build confusion matrix
+confusionMatrix(predicted_val, testing_credit_rus$Class)
+```
+
+## 5.4 Balanced Complete Dataset with ROS + RUS
+
+We will now observe the impact of combining ROS and RUS with the dataset before deriving the training and test data respectively.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+n_new <- nrow(credit_card_copy)
+fraction_fraud_new <- 0.50
+
+sampling_result <- ovun.sample(Class ~.,
+                               data = credit_card_copy,
+                               method = "both",
+                               N = n_new,
+                               p = fraction_fraud_new,
+                               seed = 2019)
+
+sampled_credit_complete <- sampling_result$data
+
+table(sampled_credit_complete$Class)
+
+set.seed(1)
+
+#Split to 80 - 20 training and test again
+credit_sample_both = sample.split(sampled_credit_complete$Class,SplitRatio=0.80)
+
+training_credit_both = subset(sampled_credit_complete,credit_sample_both == TRUE)
+testing_credit_both = subset(sampled_credit_complete,credit_sample_both == FALSE)
+```
+
+Doing so, first of all, will provide us with the distributions in our training and test data set.
+
+```{r, message = FALSE, warning = FALSE}
+table(training_credit_both$Class)
+table(testing_credit_both$Class)
+```
+
+This leads to the following classification model and resulting confusion matrix.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+### Now to make the Model ###
+
+CART_ROS_AND_RUS_model <- rpart(Class ~. ,training_credit_both, model=TRUE)
+
+rpart.plot(CART_ROS_AND_RUS_model, extra = 0, type = 5, tweak = 1.2)
+
+#Predict fraud classes
+predicted_val <- predict(CART_ROS_AND_RUS_model, testing_credit_both, type = 'class')
+
+#build confusion matrix
+confusionMatrix(predicted_val, testing_credit_both$Class)
+```
+
+## 5.5 Balanced Complete Dataset with SMOTE
+
+We will see if SMOTE truly is the most effective in enabling us to detect the True Negatives if we use it to balance our dataset.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#--------------------------------------------------------------
+#Using SMOTE to balance the dataset
+
+# Set the number of fraud and legitimate cases and the desired percentage of legimate cases
+
+n0 <- 284315
+n1 <- 492
+r0 <- 0.6
+
+#Calculate the value for the dup_size parameter of SMOTE
+ntimes <- ((1 - r0) / r0) * (n0 / n1) - 1
+
+smote_complete_output = SMOTE(X = credit_card_copy[, -c(1,31)],
+                     target = credit_card_copy$Class,
+                     K = 5,
+                     dup_size = ntimes)
+
+credit_card_copy_smote <- smote_complete_output$data	
+
+colnames(credit_card_copy_smote)[30] <- "Class"
+
+table(credit_card_copy_smote$Class) #Our data should be more balanced now.
+#------------------------------------------------------------
+set.seed(1)
+
+#Split to 80 - 20 training and test again
+credit_sample_smote = sample.split(credit_card_copy_smote$Class,SplitRatio=0.80)
+
+training_credit_smote = subset(credit_card_copy_smote,credit_sample_smote == TRUE)
+testing_credit_smote = subset(credit_card_copy_smote,credit_sample_smote == FALSE) #sub_credit_card will be 10% of the dataset
+```
+
+Applying SMOTE to our entire dataset allows us to obtain the following distribution for the obtained training and test data respectively.
+
+```{r, message = FALSE, warning = FALSE}
+table(training_credit_smote$Class)
+table(testing_credit_smote$Class)
+```
+
+The classification model and resulting confusion matrix now looks like the followig.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#Now let's see how the decision tree will go
+
+CART_smote_full_model <- rpart(Class ~ ., training_credit_smote, model=TRUE)
+
+rpart.plot(CART_smote_full_model, extra = 0, type = 5, tweak = 1.2)
+
+#predict fraud classes
+predicted_val <- predict(CART_smote_full_model, testing_credit_smote, type = 'class')
+
+confusionMatrix(predicted_val, as.factor(testing_credit_smote$Class))
+```
+
+# 6.0 Results and Analysis
+
+The aim of this project is to determine the effect of data balancing techniques with regards to properly detecting the True Negative cases (Fraudulent Transactions) while minimizing negative effects on the True Positive Rates (Non-Fraudulent Transactions).
+
+Since, for imbalanced datasets, accuracy is not a valid form of evaluation, and true to the objective of the project, we can compare the following measures in identifying the performance for each classification model resulting from obtaining data balancing techniques. These measures are:
+
+`TNR` = The True Negative Rate, or the rate of which fraudulent cases are identified out of the total number of actual fraudulent cases. In the confusion matrices, this is referred to as the `Specificity`.  
+
+`TPR` = The True Positive Rate, or the rate of which non-fraudulent cases are identified out of the total number of actual non-fraudulent cases. In the confusion matrices, this is referred to as the `Sensitivity`, or otherwise known as the `Recall`.  
+
+`Kappa` = The Kappa statistic or Cohen's Kappa is used to measure inter-rater reliability for categorical items.[14,15] The higher the kappa, the better. The aim is to at least achieve a Kappa of 0.8.[16]
+
+The following table shows the results from applying data balancing techniques to only a subset of the dataset.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+#####################################
+#
+#
+# Printing the table. Refer to the document
+# and confusion matrixes (particularly the Sensitivy and Specifity)
+# for values obtained
+#
+# P:S 
+# True Negative Rate = Specificity
+# True Positive Rate = Sensitivity / Recall
+#####################################
+
+subds_results <- tibble(Model = "Sub DS No Balancing", TNR = .6275, TPR = .9999, Kappa = 0.7133)
+subds_results <- bind_rows(subds_results,                      
+                           tibble(Model = "Sub DS ROS", TNR = .8375, TPR = .9809, Kappa = 0.1276))
+subds_results <- bind_rows(subds_results,                      
+                           tibble(Model = "Sub DS RUS", TNR = .8646, TPR = .9681, Kappa = 0.082))
+subds_results <- bind_rows(subds_results,                      
+                           tibble(Model = "Sub DS ROS+RUS", TNR = .8375, TPR = .9808, Kappa = 0.1268))
+subds_results <- bind_rows(subds_results,                      
+                           tibble(Model = "Sub DS SMOTE", TNR = .8578, TPR = .9902, Kappa = 0.2258))
+
+subds_results %>% knitr::kable()
+```
+
+Without any data balancing, TNR was only 0.628, with a Kappa of 0.713. There was an improvement in the TNR when data balancing was done, with RUS producing the highest TNR of 0.865, but this is not a reliable scale of measure as the Kappa value is only 0.082, which is considered poor.[16] In fact, all the Kappa values, with the exception of the SMOTE technique, were all considered poor, with ROS placing at 0.128 and the ROS+RUS technique obtaining a Kappa of 0.127.
+
+This means to say that although the sub data set is balanced, the number of instances was too small which could have led to the classifiers obtaining a very low Kappa rating due to the lack of Non-Fraudulent patterns in contrast to the scale of the complete dataset. At the end of the day, final data set still ended up being too imbalanced for a balanced training data set to have a reliable performance on the complete data set.
+
+However, performing data balancing techniques on the full dataset yielded better results, which are displayed in the succeeding table.
+
+```{r, message = FALSE, warning = FALSE,echo = FALSE}
+fullds_results <- tibble(Model = "Full DS No Balancing", TNR = .7347, TPR = .9999, Kappa = 0.8266)
+fullds_results <- bind_rows(fullds_results,                      
+                           tibble(Model = "Full DS ROS", TNR = .9253, TPR = .9439, Kappa = 0.8692))
+fullds_results <- bind_rows(fullds_results,                      
+                           tibble(Model = "Full DS RUS", TNR = .8878, TPR = .8980, Kappa = 0.7857))
+fullds_results <- bind_rows(fullds_results,                      
+                           tibble(Model = "Full DS ROS+RUS", TNR = .9218, TPR = .9525, Kappa = 0.8743))
+fullds_results <- bind_rows(fullds_results,                      
+                           tibble(Model = "Full DS SMOTE", TNR = .9086, TPR = .9760, Kappa = 0.8929))
+
+fullds_results %>% knitr::kable()
+```
+
+In contrast to the full dataset, which was very imbalanced, the TNR was pretty low due to a lack of instances of fraudulent transactions despite the respectable Kappa. The imbalance also resulted in a .99 TPR which was obtained due to being heavily biased towards categorizing cases as positive. We saw earlier in section 2.0 that considering the imbalanced data's accuracy for predicting non-fraudulent cases is pretty unreliable.
+
+With the balanced datasets, on the other hand, performing ROS obtained the highest TNR, which was at .925 but the TPR is only at .944, with a Kappa of 0.869. The Kappa, while respectable, means that the capability of retaining knowledge about the non-fraudulent transactions was affected. Using RUS reduced the Kappa considerably and it did not perform as well in both TNR and TPR due to, as mentioned in an earlier hypothesis, the possibility of of important data being lost. However, combining ROS and RUS led to a respectable percentage in the TNR while mantaining a TPR detection of over 95% (0.952 in the table) with an even better Kappa than the ROS method. The SMOTE continued to perform consistently as it did with being used to only a small portion of the dataset as previously mentioned by retaining 97% (0.976 in the table) of the correct classifications of non-fraudulent cases, but the TNR is lower than ROS and ROS+RUS techniques, with only a TNR or .909. Nonetheless, the Kappa statistic is an impressive 0.893 for the SMOTE method.
+
+# 7.0 Conclusions and Recommendations
+
+To support the statement made by the publishers of the dataset, Area Under the Precision-Recall Curve (AUPRC) may be used as the measure for heavily imbalanced data as demonstrated in the earlier procedures, but a balanced dataset can actually provide a considerable classification model given the proper instances and balance. Perhaps data that spans a longer period of time can be considered regarding transactions that have been made in the place of using data balancing techniques can actually lead to classifiers performing better due to a possibility for a more set entry in the dataset in lieu of a series of estimates.
+
+Nonetheless, data balancing techniques show promise only if it is conducted to the entire dataset before splitting the data into the training and testing dataset. Unfortunately, applying data balancing techniques to only a small portion of the dataset extracted as the training set was not enough to overcome the imbalanced nature of the complete dataset in this experiment, but the approach can be tweaked for future experiments that aims to find approaches that can act as fast and not computationally expensive in resources to make an approach more cost-efficient.
+
+A notable finding is that many of the classifiers found the attribute `V14` prominent as a basis for classification. Further analysis of the dataset and more sophisticated techniques like Deep Learning may be applied for possibly better results. Unfortunately, this was not possible due to the hardware limitations present, but it could be something to consider. Likewise, other data balancing techniques like the ADASYN (Adaptive Synthetic), which is an extension of the SMOTE technique, and other variations can be explored in future projects.
+
+# Bibliography
+
+[1] "What is Identity Crime" https://www.afp.gov.au/what-we-do/crime-types/fraud/identity-crime
+
+[2] "Fraud The Facts" https://www.ukfinance.org.uk/system/files/Fraud%20The%20Facts%202019%20-%20FINAL%20ONLINE.pdf
+
+[3] "Credit card fraud happens, but don’t let it happen to you"
+https://news.abs-cbn.com/business/02/25/19/credit-card-fraud-happens-but-dont-let-it-happen-to-you
+
+[4] Andrea Dal Pozzolo, Olivier Caelen, Reid A. Johnson and Gianluca Bontempi. [Calibrating Probability with Undersampling for Unbalanced Classification.](https://www.researchgate.net/publication/283349138_Calibrating_Probability_with_Undersampling_for_Unbalanced_Classification) In Symposium on Computational Intelligence and Data Mining (CIDM), IEEE, 2015
+
+[5] Dal Pozzolo, Andrea; Caelen, Olivier; Le Borgne, Yann-Ael; Waterschoot, Serge; Bontempi, Gianluca. [Learned lessons in credit card fraud detection from a practitioner perspective](https://www.researchgate.net/publication/260837261_Learned_lessons_in_credit_card_fraud_detection_from_a_practitioner_perspective), Expert systems with applications,41,10,4915-4928,2014, Pergamon
+
+[6] Dal Pozzolo, Andrea; Boracchi, Giacomo; Caelen, Olivier; Alippi, Cesare; Bontempi, Gianluca. [Credit card fraud detection: a realistic modeling and a novel learning strategy,](https://www.researchgate.net/publication/319867396_Credit_Card_Fraud_Detection_A_Realistic_Modeling_and_a_Novel_Learning_Strategy) IEEE transactions on neural networks and learning systems,29,8,3784-3797,2018,IEEE
+
+[7] Dal Pozzolo, Andrea [Adaptive Machine learning for credit card fraud detection](http://di.ulb.ac.be/map/adalpozz/pdf/Dalpozzolo2015PhD.pdf) ULB MLG PhD thesis (supervised by G. Bontempi)
+
+[8] Carcillo, Fabrizio; Dal Pozzolo, Andrea; Le Borgne, Yann-Aël; Caelen, Olivier; Mazzer, Yannis; Bontempi, Gianluca. [Scarff: a scalable framework for streaming credit card fraud detection with Spark](https://www.researchgate.net/publication/319616537_SCARFF_a_Scalable_Framework_for_Streaming_Credit_Card_Fraud_Detection_with_Spark), Information fusion,41, 182-194,2018,Elsevier
+
+[9] Carcillo, Fabrizio; Le Borgne, Yann-Aël; Caelen, Olivier; Bontempi, Gianluca. [Streaming active learning strategies for real-life credit card fraud detection: assessment and visualization,](https://www.researchgate.net/publication/324615588_Streaming_Active_Learning_Strategies_for_Real-Life_Credit_Card_Fraud_Detection_Assessment_and_Visualization) International Journal of Data Science and Analytics, 5,4,285-300,2018,Springer International Publishing
+
+[10] Chawla N., Bowyer K., Hall L., Kegelmeyer P. SMOTE: Synthetic Minority Over-sampling Technique. Journal of Artificial Intelligence Research (2002).
+
+[11] Blagus, R., Lusa, L. SMOTE for high-dimensional class-imbalanced data. BMC Bioinformatics 14, 106 (2013). https://doi.org/10.1186/1471-2105-14-106
+
+[12] Brownlee, J. "Random Oversampling and Undersampling for Imbalanced Classification". https://machinelearningmastery.com/random-oversampling-and-undersampling-for-imbalanced-classification/
+
+[13] Pykes, K. Cohen’s Kappa; Understanding Cohen’s Kappa coefficient 
+https://towardsdatascience.com/cohens-kappa-9786ceceab58
+
+[14] Cohen J (1960) A coefficient of agreement for nominal scales. Educational and Psychological Measurement 20:37-46.
+
+[15] Cohen J (1968) Weighted kappa: nominal scale agreement with provision for scaled disagreement or partial credit. Psychological Bulletin 70:213-220.
+
+[16] Altman DG (1991) Practical statistics for medical research. London: Chapman and Hall.
